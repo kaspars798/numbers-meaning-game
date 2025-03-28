@@ -74,12 +74,12 @@ class GameController extends Controller
             && $randomAnswer != self::IMPOSSIBLE_ANSWER
             && $request->answer != $randomAnswer
         ) {
-
+            //when page is refreshed in the middle of the game
             $question = $questions[count($questions) - 1];
             $randomAnswers = $this->generateAnswers($randomAnswer);
 
         } else if (count($questions) === 0) {
-
+            //when page is refreshed in the beginning of the game
             $randomAnswer = rand(1,self::MAX_NUMBER);
             $question = $this->getQuestion($randomAnswer);
             $questions[] = $question;
@@ -87,7 +87,7 @@ class GameController extends Controller
             $randomAnswers = $this->generateAnswers($randomAnswer);
 
         } else if (count($questions) === 10) {
-
+            //when user wins
             $question = '';
             $randomAnswer = self::IMPOSSIBLE_ANSWER;
             $randomAnswers = [];
@@ -95,11 +95,14 @@ class GameController extends Controller
             $this->endTheGame($request);
 
         } else {
-
+            //when user answers question
             do {
+
                 do {
+
                     $randomAnswer = rand(1,self::MAX_NUMBER);
                     $question = $this->getQuestion($randomAnswer);
+
                 } while ($question == 'NotFound');
                 
                 if (in_array($question, $questions)) {
@@ -110,7 +113,6 @@ class GameController extends Controller
                     $request->session()->put('questions', $questions);
                     $repeat = false;
                 }
-                
 
             } while ($repeat);
             
@@ -130,6 +132,6 @@ class GameController extends Controller
     public function endTheGame(Request $request) : void 
     {
         $request->session()->put('questions', []);
-        $request->session()->put('lastCorrectAnswer', 0);
+        $request->session()->put('lastCorrectAnswer', self::IMPOSSIBLE_ANSWER);
     }
 }
