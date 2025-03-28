@@ -17,9 +17,11 @@ const form = useForm({
     radio: '',
 });
 
-const submit = () => {
-    form.radio === props.correctAnswer || props.correctAnswer === '0' ? form.get(route('playGame', {answer: form.radio, start: props.correctAnswer === '0'})) : form.get(route('endGame'))
-};
+const submit = () => 
+    form.radio === props.correctAnswer || props.correctAnswer === '0' ? 
+    form.get(route('playGame', {answer: form.radio, start: props.correctAnswer === '0'})) :
+     form.get(route('endGame'))
+;
 </script>
 
 <template>
