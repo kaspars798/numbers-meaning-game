@@ -3,135 +3,92 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 use Inertia\Inertia;
 use Inertia\Response;
+use App\Providers\TriviaProviderInterface;
+use App\Repositories\GameStateRepositoryInterface;
 
 class GameController extends Controller
 {
-    const ENDPOINT = 'http://numbersapi.com';
-    const MAX_NUMBER = 100;
-    const ANSWERS_COUNT = 5;
-    const IMPOSSIBLE_ANSWER = 'azgdklsr';
+    private TriviaProviderInterface $triviaProvider;
+    private GameStateRepositoryInterface $gameState;
 
-    private function getQuestion(int $number): string
-    {
-        $response = Http::withUrlParameters([
-            'endpoint' => self::ENDPOINT,
-            'number' => $number
-        ])->get('{+endpoint}/{number}/trivia?fragment&default=NotFound');
-
-        if ($response->successful()) {
-            return $response->body();
-        }
-
-        throw new \RuntimeException($response->clientError());
+    public function __construct(
+        TriviaProviderInterface $triviaProvider, 
+        GameStateRepositoryInterface $gameState
+    ) {
+        $this->triviaProvider = $triviaProvider;
+        $this->gameState = $gameState;
     }
 
-    private function generateAnswers(int $correctAnswer): array
+    private function generateAnswerOptions(int $correctAnswer): array
     {
-        if (self::ANSWERS_COUNT > self::MAX_NUMBER) {
-            throw new \RuntimeException('answers_count must not be greater than max_number');
+        $answersCount = config('game.answers_count');
+        $maxNumber = config('game.max_number');
+
+        if ($answersCount > $maxNumber) {
+            throw new \RuntimeException('ANSWERS_COUNT must not exceed MAX_NUMBER');
         }
 
         $answers = [$correctAnswer];
-
-        while (count($answers) < self::ANSWERS_COUNT) {
-            $repeat = false;
-
-            do {
-                $newAnswer = rand(1,self::MAX_NUMBER);
-                if (in_array($newAnswer, $answers)) {
-                    $repeat = true;
-                } else {
-                    $answers[] = $newAnswer;
-                    $repeat = false;
-                }
-            } while ($repeat);
-
+        while (count($answers) < $answersCount) {
+            $newAnswer = rand(1, $maxNumber);
+            if (!in_array($newAnswer, $answers)) {
+                $answers[] = $newAnswer;
+            }
         }
 
         shuffle($answers);
-
         return $answers;
     }
 
-    public function playTheGame(Request $request): Response
+    private function generateNewQuestion(): array
     {
-        if ($request->start) {
-            $this->endTheGame($request);
+        $questions = $this->gameState->getQuestions();
+        do {
+            $correctAnswer = rand(1, config('game.max_number'));
+            $question = $this->triviaProvider->fetchQuestion($correctAnswer);
+        } while ($question === 'NotFound' || in_array($question, $questions));
+
+        $this->gameState->addQuestion($question);
+        return [$question, $correctAnswer];
+    }
+
+    public function play(Request $request): Response
+    {
+        $questions = $this->gameState->getQuestions();
+        $lastCorrectAnswer = $this->gameState->getLastCorrectAnswer();
+
+        if ($request->input('start') || count($questions) >= config('game.max_questions')) {
+            $this->gameState->reset();
+            $questions = [];
+            $lastCorrectAnswer = config('game.impossible_answer');
         }
 
-        $repeat = false;
-        $randomAnswer = $request->session()->get('lastCorrectAnswer', self::IMPOSSIBLE_ANSWER);
-        $randomAnswers = [];
         $question = '';
-        $questions = $request->session()->get('questions', []);
+        $correctAnswer = $lastCorrectAnswer;
+        $answerOptions = [];
 
-        if (
-            count($questions)
-            && !empty($request->answer)
-            && $randomAnswer != self::IMPOSSIBLE_ANSWER
-            && $request->answer != $randomAnswer
-        ) {
-            //when page is refreshed in the middle of the game
-            $question = $questions[count($questions) - 1];
-            $randomAnswers = $this->generateAnswers($randomAnswer);
+        if (count($questions) === 0) {
+            [$question, $correctAnswer] = $this->generateNewQuestion();
+            $answerOptions = $this->generateAnswerOptions($correctAnswer);
+        } elseif ($request->has('answer') && $correctAnswer !== config('game.impossible_answer')) {
+            $question = end($questions);
+            $answerOptions = $this->generateAnswerOptions($correctAnswer);
 
-        } else if (count($questions) === 0) {
-            //when page is refreshed in the beginning of the game
-            $randomAnswer = rand(1,self::MAX_NUMBER);
-            $question = $this->getQuestion($randomAnswer);
-            $questions[] = $question;
-            $request->session()->put('questions', $questions);
-            $randomAnswers = $this->generateAnswers($randomAnswer);
-
-        } else if (count($questions) === 10) {
-            //when user wins
-            $question = '';
-            $randomAnswer = self::IMPOSSIBLE_ANSWER;
-            $randomAnswers = [];
-            $questionCount = 11;
-            $this->endTheGame($request);
-
-        } else {
-            //when user answers question
-            do {
-
-                do {
-
-                    $randomAnswer = rand(1,self::MAX_NUMBER);
-                    $question = $this->getQuestion($randomAnswer);
-
-                } while ($question == 'NotFound');
-                
-                if (in_array($question, $questions)) {
-                    $repeat = true;
-                } else {
-                    $questions = $request->session()->get('questions', []);
-                    $questions[] = $question;
-                    $request->session()->put('questions', $questions);
-                    $repeat = false;
-                }
-
-            } while ($repeat);
-            
-            $randomAnswers = $this->generateAnswers($randomAnswer);
+            if ($request->input('answer') == $correctAnswer) {
+                [$question, $correctAnswer] = $this->generateNewQuestion();
+                $answerOptions = $this->generateAnswerOptions($correctAnswer);
+            }
         }
 
-        $request->session()->put('lastCorrectAnswer', $randomAnswer);
+        $this->gameState->setLastCorrectAnswer($correctAnswer);
 
         return Inertia::render('Dashboard', [
             'question' => $question,
-            'questionNo' => $questionCount ?? count( $request->session()->get('questions', []) ),
-            'correctAnswer' => $randomAnswer,
-            'allAnswers' => $randomAnswers,
+            'questionNo' => count($questions) + 1,
+            'correctAnswer' => $correctAnswer,
+            'allAnswers' => $answerOptions,
         ]);
-    }
-
-    public function endTheGame(Request $request) : void 
-    {
-        $request->session()->put('questions', []);
-        $request->session()->put('lastCorrectAnswer', self::IMPOSSIBLE_ANSWER);
     }
 }
